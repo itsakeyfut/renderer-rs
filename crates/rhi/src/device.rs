@@ -34,6 +34,7 @@
 //! let present_queue = device.present_queue();
 //! ```
 
+use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
 
 use ash::vk;
@@ -63,7 +64,8 @@ pub struct Device {
     /// Physical device handle.
     physical_device: vk::PhysicalDevice,
     /// GPU memory allocator (thread-safe via Mutex).
-    allocator: Mutex<Allocator>,
+    /// Wrapped in ManuallyDrop to ensure it's dropped before the device.
+    allocator: ManuallyDrop<Mutex<Allocator>>,
     /// Graphics queue handle.
     graphics_queue: vk::Queue,
     /// Presentation queue handle.
@@ -222,7 +224,7 @@ impl Device {
         Ok(Arc::new(Self {
             device,
             physical_device: physical_device_info.device,
-            allocator: Mutex::new(allocator),
+            allocator: ManuallyDrop::new(Mutex::new(allocator)),
             graphics_queue,
             present_queue,
             compute_queue,
@@ -359,8 +361,9 @@ impl Drop for Device {
                 tracing::error!("Failed to wait for device idle during drop: {:?}", e);
             }
 
-            // Allocator is dropped automatically when the Mutex is dropped
-            // The allocator should be empty at this point (all allocations freed)
+            // IMPORTANT: Drop allocator BEFORE destroying device.
+            // The allocator needs a valid VkDevice to clean up Vulkan memory resources.
+            ManuallyDrop::drop(&mut self.allocator);
 
             self.device.destroy_device(None);
         }
