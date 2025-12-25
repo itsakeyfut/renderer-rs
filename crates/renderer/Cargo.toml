@@ -11,6 +11,7 @@ renderer-platform = { workspace = true }
 renderer-rhi = { workspace = true }
 renderer-resources = { workspace = true }
 renderer-scene = { workspace = true }
+ash = { workspace = true }
 tracing = { workspace = true }
 glam = { workspace = true }
 bytemuck = { workspace = true }
