@@ -276,7 +276,8 @@ impl ColorAttachment {
 
 impl std::fmt::Debug for ColorAttachment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // ClearColorValue is a union, so we format the float32 variant by default
+        // ClearColorValue is a union. We format the float32 variant by default.
+        // Note: If you used with_clear_color_int/uint, this may display incorrect values.
         let clear_color = unsafe { self.clear_value.float32 };
         f.debug_struct("ColorAttachment")
             .field("image_view", &self.image_view)
@@ -656,8 +657,9 @@ impl Default for StencilAttachment {
 /// ```no_run
 /// use ash::vk;
 /// use renderer_rhi::rendering::{ColorAttachment, DepthAttachment, RenderingConfig};
+/// use renderer_rhi::command::CommandBuffer;
 ///
-/// # fn example(color_view: vk::ImageView, depth_view: vk::ImageView) {
+/// # fn example(color_view: vk::ImageView, depth_view: vk::ImageView, cmd: &CommandBuffer) {
 /// let config = RenderingConfig::new(1920, 1080)
 ///     .with_color_attachment(
 ///         ColorAttachment::new(color_view)
@@ -668,8 +670,10 @@ impl Default for StencilAttachment {
 ///             .with_clear_depth(1.0)
 ///     );
 ///
-/// let (rendering_info, color_attachments, depth_attachment) = config.build_rendering_info();
-/// // Use rendering_info with cmd.begin_rendering(&rendering_info)
+/// let bundle = config.build();
+/// cmd.begin_rendering(bundle.info());
+/// // ... draw commands ...
+/// cmd.end_rendering();
 /// # }
 /// ```
 #[derive(Clone, Debug, Default)]
