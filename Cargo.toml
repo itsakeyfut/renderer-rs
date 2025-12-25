@@ -1,6 +1,56 @@
-[package]
-name = "renderer-rs"
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/platform",
+    "crates/rhi",
+    "crates/resources",
+    "crates/scene",
+    "crates/renderer",
+    "crates/app",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/itsakeyfut/renderer-rs"
 
-[dependencies]
+[workspace.dependencies]
+# Vulkan
+ash = "0.32.1"
+ash-window = "0.13.0"
+gpu-allocator = "0.28.0"
+
+# Window management
+winit = "0.30.12"
+raw-window-handle = "0.6.2"
+
+# Math
+glam = { version = "0.30.9", features = ["bytemuck"] }
+bytemuck = { version = "1.24.0", features = ["derive"] }
+
+# Logging
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+
+# Asset loading
+gltf = "1.4.1"
+image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "hdr"] }
+
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.147"
+
+# Error handling
+thiserror = "2.0.17"
+anyhow = "1.0.100"
+
+# Internal crates
+renderer-core = { path = "crates/core" }
+renderer-platform = { path = "crates/platform" }
+renderer-rhi = { path = "crates/rhi" }
+renderer-resources = { path = "crates/resources" }
+renderer-scene = { path = "crates/scene" }
+renderer-renderer = { path = "crates/renderer" }
+renderer-app = { path = "crates/app" }

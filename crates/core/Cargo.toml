@@ -1,0 +1,13 @@
+[package]
+name = "renderer-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core utilities for the Vulkan renderer"
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
