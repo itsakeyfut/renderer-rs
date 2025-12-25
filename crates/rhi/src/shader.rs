@@ -51,6 +51,81 @@ use tracing::{debug, info};
 use crate::device::Device;
 use crate::error::{RhiError, RhiResult};
 
+/// SPIR-V magic number (0x07230203).
+/// Used to detect byte order of SPIR-V modules.
+const SPIRV_MAGIC: u32 = 0x07230203;
+
+/// Byte order of a SPIR-V module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpirVByteOrder {
+    LittleEndian,
+    BigEndian,
+}
+
+/// Validates SPIR-V byte alignment.
+///
+/// SPIR-V modules must have a byte length that is a multiple of 4.
+///
+/// # Errors
+///
+/// Returns an error if the byte length is not a multiple of 4.
+fn validate_spirv_alignment(bytes: &[u8]) -> RhiResult<()> {
+    if !bytes.len().is_multiple_of(4) {
+        return Err(RhiError::ShaderError(format!(
+            "SPIR-V code must be 4-byte aligned, got {} bytes",
+            bytes.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Detects the byte order of a SPIR-V module by examining the magic number.
+///
+/// The SPIR-V specification does not mandate a single byte order for binary modules.
+/// Instead, byte order is detected from the 32-bit magic number at the start.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The byte slice is too short (less than 4 bytes)
+/// - The magic number doesn't match in either byte order
+fn detect_spirv_byte_order(bytes: &[u8]) -> RhiResult<SpirVByteOrder> {
+    if bytes.len() < 4 {
+        return Err(RhiError::ShaderError(
+            "SPIR-V code too short to contain magic number".to_string(),
+        ));
+    }
+
+    let first_word_le = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let first_word_be = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+
+    if first_word_le == SPIRV_MAGIC {
+        Ok(SpirVByteOrder::LittleEndian)
+    } else if first_word_be == SPIRV_MAGIC {
+        Ok(SpirVByteOrder::BigEndian)
+    } else {
+        Err(RhiError::ShaderError(format!(
+            "Invalid SPIR-V magic number: expected 0x{:08X}, got 0x{:08X} (LE) or 0x{:08X} (BE)",
+            SPIRV_MAGIC, first_word_le, first_word_be
+        )))
+    }
+}
+
+/// Converts SPIR-V bytes to u32 code words based on detected byte order.
+fn convert_spirv_bytes_to_words(bytes: &[u8], byte_order: SpirVByteOrder) -> Vec<u32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| match byte_order {
+            SpirVByteOrder::LittleEndian => {
+                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+            }
+            SpirVByteOrder::BigEndian => {
+                u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+            }
+        })
+        .collect()
+}
+
 /// Shader stage type.
 ///
 /// Defines which stage of the graphics or compute pipeline
@@ -224,18 +299,13 @@ impl Shader {
         entry_point: &str,
     ) -> RhiResult<Self> {
         // Validate SPIR-V alignment
-        if !bytes.len().is_multiple_of(4) {
-            return Err(RhiError::ShaderError(format!(
-                "SPIR-V code must be 4-byte aligned, got {} bytes",
-                bytes.len()
-            )));
-        }
+        validate_spirv_alignment(bytes)?;
 
-        // Convert bytes to u32 code words
-        let code: Vec<u32> = bytes
-            .chunks_exact(4)
-            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect();
+        // Detect byte order from magic number
+        let byte_order = detect_spirv_byte_order(bytes)?;
+
+        // Convert bytes to u32 code words using detected byte order
+        let code = convert_spirv_bytes_to_words(bytes, byte_order);
 
         // Create shader module
         let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
@@ -393,11 +463,64 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_spirv_alignment() {
-        // This test verifies that from_spirv_bytes rejects misaligned data
-        // We can't actually call from_spirv_bytes without a device,
-        // but we can test the alignment logic manually
+    fn test_validate_spirv_alignment() {
+        // Test misaligned bytes are rejected
         let misaligned_bytes = vec![0u8; 5]; // Not a multiple of 4
-        assert!(misaligned_bytes.len() % 4 != 0);
+        assert!(validate_spirv_alignment(&misaligned_bytes).is_err());
+
+        // Test aligned bytes are accepted
+        let aligned_bytes = vec![0u8; 8]; // Multiple of 4
+        assert!(validate_spirv_alignment(&aligned_bytes).is_ok());
+
+        // Test empty bytes are accepted (0 is multiple of 4)
+        let empty_bytes: Vec<u8> = vec![];
+        assert!(validate_spirv_alignment(&empty_bytes).is_ok());
+    }
+
+    #[test]
+    fn test_detect_spirv_byte_order_little_endian() {
+        // SPIR-V magic number in little-endian byte order
+        let le_magic: [u8; 4] = [0x03, 0x02, 0x23, 0x07];
+        assert_eq!(
+            detect_spirv_byte_order(&le_magic).unwrap(),
+            SpirVByteOrder::LittleEndian
+        );
+    }
+
+    #[test]
+    fn test_detect_spirv_byte_order_big_endian() {
+        // SPIR-V magic number in big-endian byte order
+        let be_magic: [u8; 4] = [0x07, 0x23, 0x02, 0x03];
+        assert_eq!(
+            detect_spirv_byte_order(&be_magic).unwrap(),
+            SpirVByteOrder::BigEndian
+        );
+    }
+
+    #[test]
+    fn test_detect_spirv_byte_order_invalid() {
+        // Invalid magic number
+        let invalid_magic: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
+        assert!(detect_spirv_byte_order(&invalid_magic).is_err());
+    }
+
+    #[test]
+    fn test_detect_spirv_byte_order_too_short() {
+        // Too short to contain magic number
+        let short_bytes: [u8; 2] = [0x03, 0x02];
+        assert!(detect_spirv_byte_order(&short_bytes).is_err());
+    }
+
+    #[test]
+    fn test_convert_spirv_bytes_to_words() {
+        // Test little-endian conversion
+        let le_bytes: [u8; 8] = [0x03, 0x02, 0x23, 0x07, 0x00, 0x01, 0x02, 0x03];
+        let le_words = convert_spirv_bytes_to_words(&le_bytes, SpirVByteOrder::LittleEndian);
+        assert_eq!(le_words, vec![0x07230203, 0x03020100]);
+
+        // Test big-endian conversion
+        let be_bytes: [u8; 8] = [0x07, 0x23, 0x02, 0x03, 0x00, 0x01, 0x02, 0x03];
+        let be_words = convert_spirv_bytes_to_words(&be_bytes, SpirVByteOrder::BigEndian);
+        assert_eq!(be_words, vec![0x07230203, 0x00010203]);
     }
 }
