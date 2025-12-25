@@ -36,6 +36,10 @@ pub enum RhiError {
     /// Invalid handle error
     #[error("Invalid handle: {0}")]
     InvalidHandle(String),
+
+    /// Pipeline creation error
+    #[error("Pipeline error: {0}")]
+    PipelineError(String),
 }
 
 /// Result type alias for RHI operations.
