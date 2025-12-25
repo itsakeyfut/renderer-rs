@@ -4,16 +4,22 @@
 //! all Vulkan resources and rendering operations.
 
 use std::mem::ManuallyDrop;
+use std::path::Path;
 use std::sync::Arc;
 
 use ash::vk;
+use glam::Vec3;
 use tracing::{debug, error, info, warn};
 
 use renderer_platform::{Surface, Window};
+use renderer_rhi::buffer::{Buffer, BufferUsage};
 use renderer_rhi::device::Device;
 use renderer_rhi::instance::Instance;
 use renderer_rhi::physical_device::select_physical_device;
+use renderer_rhi::pipeline::{CullMode, GraphicsPipelineBuilder, Pipeline, PipelineLayout};
+use renderer_rhi::shader::{Shader, ShaderStage};
 use renderer_rhi::swapchain::Swapchain;
+use renderer_rhi::vertex::TriangleVertex;
 use renderer_rhi::{RhiError, RhiResult};
 
 use crate::MAX_FRAMES_IN_FLIGHT;
@@ -39,10 +45,11 @@ struct FrameSync {
 /// Vulkan resources must be destroyed in the correct order:
 /// 1. Wait for all GPU work to complete
 /// 2. Destroy per-frame resources (semaphores, fences, command pools)
-/// 3. Destroy swapchain
-/// 4. Destroy surface
-/// 5. Destroy device
-/// 6. Destroy instance
+/// 3. Destroy triangle resources (pipeline, vertex buffer)
+/// 4. Destroy swapchain
+/// 5. Destroy surface
+/// 6. Destroy device
+/// 7. Destroy instance
 ///
 /// ManuallyDrop is used to ensure correct destruction order.
 pub struct Renderer {
@@ -66,6 +73,16 @@ pub struct Renderer {
     width: u32,
     /// Current window height.
     height: u32,
+
+    // Triangle rendering resources (ManuallyDrop for correct destruction order)
+    /// Triangle graphics pipeline.
+    triangle_pipeline: ManuallyDrop<Pipeline>,
+    /// Triangle pipeline layout (stored to keep alive for pipeline's lifetime).
+    triangle_pipeline_layout: ManuallyDrop<PipelineLayout>,
+    /// Triangle vertex buffer.
+    triangle_vertex_buffer: ManuallyDrop<Buffer>,
+    /// Number of triangle vertices.
+    triangle_vertex_count: u32,
 }
 
 impl Renderer {
@@ -106,6 +123,14 @@ impl Renderer {
         // Create per-frame synchronization resources
         let frame_sync = Self::create_frame_sync(&device, MAX_FRAMES_IN_FLIGHT)?;
 
+        // Create triangle resources
+        let (
+            triangle_pipeline,
+            triangle_pipeline_layout,
+            triangle_vertex_buffer,
+            triangle_vertex_count,
+        ) = Self::create_triangle_resources(device.clone(), swapchain.format())?;
+
         info!(
             "Renderer initialized: {} swapchain images, {} frames in flight",
             swapchain.image_count(),
@@ -122,6 +147,10 @@ impl Renderer {
             framebuffer_resized: false,
             width,
             height,
+            triangle_pipeline: ManuallyDrop::new(triangle_pipeline),
+            triangle_pipeline_layout: ManuallyDrop::new(triangle_pipeline_layout),
+            triangle_vertex_buffer: ManuallyDrop::new(triangle_vertex_buffer),
+            triangle_vertex_count,
         })
     }
 
@@ -164,6 +193,70 @@ impl Renderer {
         }
 
         Ok(frames)
+    }
+
+    /// Creates triangle rendering resources.
+    ///
+    /// This includes:
+    /// - Loading and compiling shaders
+    /// - Creating the pipeline layout
+    /// - Creating the graphics pipeline
+    /// - Creating and populating the vertex buffer
+    fn create_triangle_resources(
+        device: Arc<Device>,
+        swapchain_format: vk::Format,
+    ) -> RhiResult<(Pipeline, PipelineLayout, Buffer, u32)> {
+        // Load shaders
+        let vertex_shader = Shader::from_spirv_file(
+            device.clone(),
+            Path::new("shaders/spirv/triangle.vert.spv"),
+            ShaderStage::Vertex,
+            "main",
+        )?;
+
+        let fragment_shader = Shader::from_spirv_file(
+            device.clone(),
+            Path::new("shaders/spirv/triangle.frag.spv"),
+            ShaderStage::Fragment,
+            "main",
+        )?;
+
+        // Create pipeline layout (no descriptors needed for Hello Triangle)
+        let pipeline_layout = PipelineLayout::new(device.clone(), &[], &[])?;
+
+        // Create graphics pipeline
+        let pipeline = GraphicsPipelineBuilder::new()
+            .vertex_shader(&vertex_shader)
+            .fragment_shader(&fragment_shader)
+            .vertex_binding(TriangleVertex::binding_description())
+            .vertex_attributes(&TriangleVertex::attribute_descriptions())
+            .color_attachment_format(swapchain_format)
+            .cull_mode(CullMode::None) // Don't cull for simple triangle
+            .depth_test_enable(false) // No depth testing for 2D triangle
+            .depth_write_enable(false)
+            .build(device.clone(), &pipeline_layout)?;
+
+        // Create triangle vertex data
+        // Colored triangle with vertices at:
+        // Top: red, Bottom-left: green, Bottom-right: blue
+        let vertices = [
+            TriangleVertex::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)), // Top - red
+            TriangleVertex::new(Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)), // Bottom-left - green
+            TriangleVertex::new(Vec3::new(0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 1.0)), // Bottom-right - blue
+        ];
+
+        // Create vertex buffer with triangle data
+        let vertex_buffer =
+            Buffer::new_with_data(device, BufferUsage::Vertex, bytemuck::cast_slice(&vertices))?;
+
+        info!("Triangle resources created");
+
+        Ok((
+            pipeline,
+            pipeline_layout,
+            vertex_buffer,
+            vertices.len() as u32,
+        ))
     }
 
     /// Notifies the renderer that the window has been resized.
@@ -424,7 +517,25 @@ impl Renderer {
             };
             self.device.handle().cmd_set_scissor(cmd, 0, &[scissor]);
 
-            // TODO: Draw calls would go here
+            // Bind triangle pipeline
+            self.device.handle().cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.triangle_pipeline.handle(),
+            );
+
+            // Bind vertex buffer
+            self.device.handle().cmd_bind_vertex_buffers(
+                cmd,
+                0,
+                &[self.triangle_vertex_buffer.handle()],
+                &[0],
+            );
+
+            // Draw the triangle
+            self.device
+                .handle()
+                .cmd_draw(cmd, self.triangle_vertex_count, 1, 0, 0);
 
             self.device.handle().cmd_end_rendering(cmd);
         }
@@ -550,11 +661,17 @@ impl Drop for Renderer {
         }
 
         // Manually drop resources in correct order:
-        // 1. Swapchain (uses device and surface)
-        // 2. Surface (uses instance)
-        // 3. Device is Arc, will be dropped when all refs are gone
-        // 4. Instance (must be last)
+        // 1. Triangle resources (use device)
+        // 2. Swapchain (uses device and surface)
+        // 3. Surface (uses instance)
+        // 4. Device is Arc, will be dropped when all refs are gone
+        // 5. Instance (must be last)
         unsafe {
+            // Drop triangle resources first (they hold Arc<Device>)
+            ManuallyDrop::drop(&mut self.triangle_vertex_buffer);
+            ManuallyDrop::drop(&mut self.triangle_pipeline);
+            ManuallyDrop::drop(&mut self.triangle_pipeline_layout);
+
             ManuallyDrop::drop(&mut self.swapchain);
             ManuallyDrop::drop(&mut self.surface);
             // Device (Arc) will be dropped automatically
