@@ -1,0 +1,11 @@
+[package]
+name = "renderer-scene"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Scene graph and components for the renderer"
+
+[dependencies]
+renderer-core = { workspace = true }
+glam = { workspace = true }
+bytemuck = { workspace = true }

@@ -1,0 +1,12 @@
+[package]
+name = "renderer-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Platform abstraction layer for the Vulkan renderer"
+
+[dependencies]
+renderer-core = { workspace = true }
+winit = { workspace = true }
+raw-window-handle = { workspace = true }
+tracing = { workspace = true }

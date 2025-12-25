@@ -1,0 +1,22 @@
+[package]
+name = "renderer-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Main application binary for the Vulkan renderer"
+
+[[bin]]
+name = "renderer"
+path = "src/main.rs"
+
+[dependencies]
+renderer-core = { workspace = true }
+renderer-platform = { workspace = true }
+renderer-rhi = { workspace = true }
+renderer-resources = { workspace = true }
+renderer-scene = { workspace = true }
+renderer-renderer = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+winit = { workspace = true }
+anyhow = { workspace = true }
