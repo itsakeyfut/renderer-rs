@@ -885,65 +885,6 @@ impl RenderingConfig {
         self.render_area.extent.height
     }
 
-    /// Builds the `VkRenderingInfo` and associated attachment infos.
-    ///
-    /// Returns a tuple containing:
-    /// - The `VkRenderingInfo` structure
-    /// - Vector of color attachment infos (must be kept alive while rendering)
-    /// - Optional depth attachment info (must be kept alive while rendering)
-    ///
-    /// # Important
-    ///
-    /// The returned attachment info vectors must be kept alive for the duration
-    /// of the rendering operation, as `VkRenderingInfo` contains pointers to them.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use ash::vk;
-    /// use renderer_rhi::rendering::{ColorAttachment, RenderingConfig};
-    /// use renderer_rhi::command::CommandBuffer;
-    ///
-    /// # fn example(config: RenderingConfig, cmd: &CommandBuffer) {
-    /// // Build rendering info - keep returned values alive during rendering
-    /// let (rendering_info, _color_infos, _depth_info) = config.build_rendering_info();
-    ///
-    /// cmd.begin_rendering(&rendering_info);
-    /// // ... draw commands ...
-    /// cmd.end_rendering();
-    /// // Now it's safe to drop _color_infos and _depth_info
-    /// # }
-    /// ```
-    pub fn build_rendering_info(
-        &self,
-    ) -> (
-        vk::RenderingInfo<'static>,
-        Vec<vk::RenderingAttachmentInfo<'static>>,
-        Option<vk::RenderingAttachmentInfo<'static>>,
-    ) {
-        let color_attachments: Vec<vk::RenderingAttachmentInfo> = self
-            .color_attachments
-            .iter()
-            .map(|a| a.to_rendering_attachment_info())
-            .collect();
-
-        let depth_attachment = self
-            .depth_attachment
-            .as_ref()
-            .map(|a| a.to_rendering_attachment_info());
-
-        let rendering_info = vk::RenderingInfo::default()
-            .render_area(self.render_area)
-            .layer_count(self.layer_count)
-            .view_mask(self.view_mask)
-            .flags(self.flags);
-
-        // Note: The caller must keep color_attachments alive
-        // We return them so the caller can manage their lifetime
-
-        (rendering_info, color_attachments, depth_attachment)
-    }
-
     /// Builds the complete `VkRenderingInfo` with proper lifetimes.
     ///
     /// This is a convenience method that handles the lifetime complexity
