@@ -10,7 +10,7 @@ mod input;
 mod window;
 
 pub use input::{InputState, KeyCode, MouseButton};
-pub use window::{Window, get_required_extensions};
+pub use window::{Surface, Window, get_required_extensions};
 
 // Re-export winit types that users might need
 pub use winit::event::{Event, WindowEvent};
