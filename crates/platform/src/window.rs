@@ -1,5 +1,8 @@
 //! Window management using winit.
+//!
+//! This module provides window creation and Vulkan surface creation functionality.
 
+use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
 use winit::dpi::PhysicalSize;
@@ -89,4 +92,67 @@ impl Window {
     pub fn request_redraw(&self) {
         self.window.request_redraw();
     }
+
+    /// Create a Vulkan surface for this window.
+    ///
+    /// # Safety
+    /// The caller must ensure that the `entry` and `instance` are valid
+    /// and that the surface is destroyed before the instance.
+    ///
+    /// # Errors
+    /// Returns an error if surface creation fails.
+    pub fn create_surface(
+        &self,
+        entry: &ash::Entry,
+        instance: &ash::Instance,
+    ) -> Result<vk::SurfaceKHR> {
+        let display_handle = self
+            .window
+            .display_handle()
+            .map_err(|e| Error::Window(format!("Failed to get display handle: {}", e)))?;
+
+        let window_handle = self
+            .window
+            .window_handle()
+            .map_err(|e| Error::Window(format!("Failed to get window handle: {}", e)))?;
+
+        let surface = unsafe {
+            ash_window::create_surface(
+                entry,
+                instance,
+                display_handle.as_raw(),
+                window_handle.as_raw(),
+                None,
+            )
+            .map_err(|e| Error::Vulkan(format!("Failed to create Vulkan surface: {}", e)))?
+        };
+
+        tracing::info!("Vulkan surface created successfully");
+
+        Ok(surface)
+    }
+}
+
+/// Get the required Vulkan extensions for surface creation on the current platform.
+///
+/// This function returns the extension names needed to create a Vulkan surface
+/// for the given display handle.
+///
+/// # Errors
+/// Returns an error if the required extensions cannot be enumerated.
+pub fn get_required_extensions(
+    display_handle: raw_window_handle::RawDisplayHandle,
+) -> Result<Vec<*const i8>> {
+    let extensions = ash_window::enumerate_required_extensions(display_handle)
+        .map_err(|e| Error::Vulkan(format!("Failed to enumerate required extensions: {}", e)))?;
+
+    tracing::debug!(
+        "Required Vulkan extensions for surface: {:?}",
+        extensions
+            .iter()
+            .map(|&ext| unsafe { std::ffi::CStr::from_ptr(ext) })
+            .collect::<Vec<_>>()
+    );
+
+    Ok(extensions.to_vec())
 }

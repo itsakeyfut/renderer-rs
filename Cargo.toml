@@ -18,7 +18,7 @@ repository = "https://github.com/itsakeyfut/renderer-rs"
 
 [workspace.dependencies]
 # Vulkan
-ash = "0.32.1"
+ash = "0.38.0"
 ash-window = "0.13.0"
 gpu-allocator = "0.28.0"
 
