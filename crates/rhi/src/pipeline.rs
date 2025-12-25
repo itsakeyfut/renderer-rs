@@ -912,6 +912,8 @@ impl<'a> GraphicsPipelineBuilder<'a> {
     /// - Vertex shader is not set
     /// - Fragment shader is not set
     /// - No color attachment formats are specified
+    /// - Depth test/write is enabled but no depth format is specified
+    /// - Blend attachment count doesn't match color attachment count
     /// - Pipeline creation fails
     pub fn build(self, device: Arc<Device>, layout: &PipelineLayout) -> RhiResult<Pipeline> {
         // Validate required fields
@@ -927,6 +929,26 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             return Err(RhiError::PipelineError(
                 "At least one color attachment format is required".to_string(),
             ));
+        }
+
+        // Validate depth test/write settings
+        let has_depth = self.depth_attachment_format.is_some();
+        if (self.depth_test_enable || self.depth_write_enable) && !has_depth {
+            return Err(RhiError::PipelineError(
+                "Depth test or write is enabled but no depth attachment format is specified"
+                    .to_string(),
+            ));
+        }
+
+        // Validate blend attachment count matches color attachment count
+        if !self.color_blend_attachments.is_empty()
+            && self.color_blend_attachments.len() != self.color_attachment_formats.len()
+        {
+            return Err(RhiError::PipelineError(format!(
+                "Blend attachment count ({}) must match color attachment count ({})",
+                self.color_blend_attachments.len(),
+                self.color_attachment_formats.len()
+            )));
         }
 
         // Create shader stage infos
@@ -970,10 +992,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             .min_sample_shading(self.min_sample_shading);
 
         // Depth/stencil state
-        let has_depth = self.depth_attachment_format.is_some();
+        // Note: depth_test_enable and depth_write_enable are validated above
+        // to only be enabled when a depth format is provided
         let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
-            .depth_test_enable(has_depth && self.depth_test_enable)
-            .depth_write_enable(has_depth && self.depth_write_enable)
+            .depth_test_enable(self.depth_test_enable)
+            .depth_write_enable(self.depth_write_enable)
             .depth_compare_op(self.depth_compare_op.to_vk())
             .depth_bounds_test_enable(self.depth_bounds_test_enable)
             .min_depth_bounds(self.min_depth_bounds)
