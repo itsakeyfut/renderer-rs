@@ -4,7 +4,7 @@
 //! rendering techniques including PBR, IBL, and deferred shading.
 
 use anyhow::Result;
-use tracing::info;
+use tracing::{error, info};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -12,9 +12,11 @@ use winit::window::WindowId;
 
 use renderer_core::Timer;
 use renderer_platform::{InputState, Window};
+use renderer_renderer::Renderer;
 
 struct App {
     window: Option<Window>,
+    renderer: Option<Renderer>,
     input: InputState,
     timer: Timer,
 }
@@ -23,6 +25,7 @@ impl App {
     fn new() -> Self {
         Self {
             window: None,
+            renderer: None,
             input: InputState::new(),
             timer: Timer::new(),
         }
@@ -34,11 +37,21 @@ impl ApplicationHandler for App {
         if self.window.is_none() {
             match Window::new(event_loop, 1280, 720, "Vulkan Renderer") {
                 Ok(window) => {
-                    info!("Initialization complete, entering main loop");
-                    self.window = Some(window);
+                    // Create renderer after window is created
+                    match Renderer::new(&window) {
+                        Ok(renderer) => {
+                            info!("Initialization complete, entering main loop");
+                            self.renderer = Some(renderer);
+                            self.window = Some(window);
+                        }
+                        Err(e) => {
+                            error!("Failed to create renderer: {:?}", e);
+                            event_loop.exit();
+                        }
+                    }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to create window: {}", e);
+                    error!("Failed to create window: {}", e);
                     event_loop.exit();
                 }
             }
@@ -53,11 +66,21 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => {
                 info!("Window resized to {}x{}", size.width, size.height);
-                // TODO: Handle resize
+                if let Some(ref mut window) = self.window {
+                    window.resize(size.width, size.height);
+                }
+                if let Some(ref mut renderer) = self.renderer {
+                    renderer.resize(size.width, size.height);
+                }
             }
             WindowEvent::RedrawRequested => {
                 let _delta = self.timer.delta_secs();
-                // TODO: Render frame
+
+                if let Some(ref mut renderer) = self.renderer
+                    && let Err(e) = renderer.render_frame()
+                {
+                    error!("Render error: {:?}", e);
+                }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 use winit::keyboard::PhysicalKey;

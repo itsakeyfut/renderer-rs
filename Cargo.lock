@@ -1302,6 +1302,7 @@ dependencies = [
 name = "renderer-renderer"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "bytemuck",
  "glam",
  "renderer-core",
