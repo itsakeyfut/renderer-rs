@@ -17,8 +17,13 @@
 //! ```no_run
 //! use ash::vk;
 //! use renderer_rhi::rendering::{ColorAttachment, DepthAttachment, RenderingConfig};
+//! use renderer_rhi::command::CommandBuffer;
 //!
-//! # fn example(swapchain_image_view: vk::ImageView, depth_image_view: vk::ImageView) {
+//! # fn example(
+//! #     swapchain_image_view: vk::ImageView,
+//! #     depth_image_view: vk::ImageView,
+//! #     cmd: &CommandBuffer,
+//! # ) {
 //! // Set up color attachment with clear
 //! let color_attachment = ColorAttachment::new(swapchain_image_view)
 //!     .with_clear_color([0.1, 0.1, 0.1, 1.0]);
@@ -32,8 +37,11 @@
 //!     .with_color_attachment(color_attachment)
 //!     .with_depth_attachment(depth_attachment);
 //!
-//! // Build VkRenderingInfo for use with vkCmdBeginRendering
-//! let (rendering_info, _color_infos, _depth_info) = config.build_rendering_info();
+//! // Build rendering info bundle with proper lifetime management
+//! let bundle = config.build();
+//! cmd.begin_rendering(bundle.info());
+//! // ... draw commands ...
+//! cmd.end_rendering();
 //! # }
 //! ```
 
