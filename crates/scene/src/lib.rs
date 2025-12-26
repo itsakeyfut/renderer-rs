@@ -9,6 +9,6 @@ pub mod camera;
 pub mod light;
 pub mod transform;
 
-pub use camera::Camera;
+pub use camera::{Camera, FpsController, OrbitController, Projection};
 pub use light::{DirectionalLight, PointLight, SpotLight};
 pub use transform::Transform;
