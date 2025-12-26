@@ -1305,6 +1305,7 @@ dependencies = [
  "ash",
  "bytemuck",
  "glam",
+ "gpu-allocator",
  "renderer-core",
  "renderer-platform",
  "renderer-resources",
