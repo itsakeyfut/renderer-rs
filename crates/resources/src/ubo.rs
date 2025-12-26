@@ -229,6 +229,12 @@ impl ObjectUbo {
     /// The normal matrix is the transpose of the inverse of the model matrix.
     /// This ensures normals are transformed correctly even with non-uniform scaling.
     ///
+    /// # Non-invertible matrices
+    ///
+    /// If the model matrix is not invertible (e.g., contains zero scale),
+    /// the identity matrix is returned as a fallback to avoid NaN/Inf values
+    /// propagating to shaders.
+    ///
     /// # Arguments
     ///
     /// * `model` - The model matrix
@@ -237,7 +243,19 @@ impl ObjectUbo {
         // For correct normal transformation, we need transpose(inverse(model))
         // If the model matrix is orthogonal (no scaling or uniform scaling),
         // the normal matrix equals the model matrix.
-        model.inverse().transpose()
+
+        // Check if matrix is invertible by checking determinant
+        // Use a small epsilon to handle floating-point precision issues
+        const EPSILON: f32 = 1e-6;
+        let det = model.determinant();
+
+        if det.abs() < EPSILON {
+            // Matrix is not invertible (e.g., zero scale)
+            // Return identity as a safe fallback
+            Mat4::IDENTITY
+        } else {
+            model.inverse().transpose()
+        }
     }
 
     /// Returns the size of this structure in bytes.
@@ -478,6 +496,30 @@ mod tests {
         // Normal matrix should be inverse transpose
         let expected_normal = model.inverse().transpose();
         assert_eq!(ubo.normal_matrix, expected_normal);
+    }
+
+    #[test]
+    fn test_object_ubo_non_invertible_matrix() {
+        // Zero scale makes the matrix non-invertible
+        let model = Mat4::from_scale(Vec3::ZERO);
+        let ubo = ObjectUbo::new(model);
+
+        // Should return identity matrix as fallback, not NaN
+        assert_eq!(ubo.normal_matrix, Mat4::IDENTITY);
+
+        // Ensure no NaN values in the normal matrix
+        let cols = [
+            ubo.normal_matrix.x_axis,
+            ubo.normal_matrix.y_axis,
+            ubo.normal_matrix.z_axis,
+            ubo.normal_matrix.w_axis,
+        ];
+        for col in cols {
+            assert!(!col.x.is_nan());
+            assert!(!col.y.is_nan());
+            assert!(!col.z.is_nan());
+            assert!(!col.w.is_nan());
+        }
     }
 
     #[test]
