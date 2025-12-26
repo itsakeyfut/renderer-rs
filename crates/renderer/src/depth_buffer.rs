@@ -150,22 +150,43 @@ impl DepthBuffer {
         // Get memory requirements and allocate
         let requirements = unsafe { device.handle().get_image_memory_requirements(image) };
 
-        let allocation = {
-            let mut allocator = device.allocator().lock().unwrap();
-            allocator.allocate(&AllocationCreateDesc {
+        // Helper closure to destroy image on failure
+        let destroy_image = |dev: &Device| unsafe {
+            dev.handle().destroy_image(image, None);
+        };
+
+        let allocation = match device.allocator().lock() {
+            Ok(mut allocator) => match allocator.allocate(&AllocationCreateDesc {
                 name: "depth_buffer",
                 requirements,
                 location: MemoryLocation::GpuOnly,
                 linear: false, // Optimal tiling is not linear
                 allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-            })?
+            }) {
+                Ok(alloc) => alloc,
+                Err(e) => {
+                    destroy_image(&device);
+                    return Err(e.into());
+                }
+            },
+            Err(_) => {
+                destroy_image(&device);
+                return Err(RhiError::LockPoisoned("allocator".to_string()));
+            }
         };
 
         // Bind memory to image
-        unsafe {
+        if let Err(e) = unsafe {
             device
                 .handle()
-                .bind_image_memory(image, allocation.memory(), allocation.offset())?;
+                .bind_image_memory(image, allocation.memory(), allocation.offset())
+        } {
+            // Clean up allocation and image on failure
+            if let Ok(mut allocator) = device.allocator().lock() {
+                let _ = allocator.free(allocation);
+            }
+            destroy_image(&device);
+            return Err(e.into());
         }
 
         // Create image view
@@ -182,7 +203,17 @@ impl DepthBuffer {
                     .layer_count(1),
             );
 
-        let image_view = unsafe { device.handle().create_image_view(&view_info, None)? };
+        let image_view = match unsafe { device.handle().create_image_view(&view_info, None) } {
+            Ok(view) => view,
+            Err(e) => {
+                // Clean up allocation and image on failure
+                if let Ok(mut allocator) = device.allocator().lock() {
+                    let _ = allocator.free(allocation);
+                }
+                destroy_image(&device);
+                return Err(e.into());
+            }
+        };
 
         info!("Created depth buffer: {}x{} ({:?})", width, height, format);
 
@@ -263,9 +294,15 @@ impl Drop for DepthBuffer {
 
         // Free allocation
         if let Some(allocation) = self.allocation.take() {
-            let mut allocator = self.device.allocator().lock().unwrap();
-            if let Err(e) = allocator.free(allocation) {
-                tracing::error!("Failed to free depth buffer allocation: {:?}", e);
+            match self.device.allocator().lock() {
+                Ok(mut allocator) => {
+                    if let Err(e) = allocator.free(allocation) {
+                        tracing::error!("Failed to free depth buffer allocation: {:?}", e);
+                    }
+                }
+                Err(_) => {
+                    tracing::error!("Failed to lock allocator for depth buffer cleanup");
+                }
             }
         }
 

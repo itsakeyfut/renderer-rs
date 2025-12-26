@@ -40,6 +40,10 @@ pub enum RhiError {
     /// Pipeline creation error
     #[error("Pipeline error: {0}")]
     PipelineError(String),
+
+    /// Mutex lock poisoned error
+    #[error("Lock poisoned: {0}")]
+    LockPoisoned(String),
 }
 
 /// Result type alias for RHI operations.
