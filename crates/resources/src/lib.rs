@@ -13,12 +13,13 @@
 //! use renderer_resources::Model;
 //!
 //! // Load a glTF model
-//! let model = Model::load(Path::new("assets/model.gltf")).unwrap();
+//! let model = Model::load(Path::new("assets/model.gltf"))?;
 //!
 //! // Access mesh data
 //! for mesh in &model.meshes {
 //!     println!("Mesh has {} vertices", mesh.vertex_count());
 //! }
+//! # Ok::<(), renderer_resources::ResourceError>(())
 //! ```
 
 pub mod error;
