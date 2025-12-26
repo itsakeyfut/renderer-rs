@@ -302,7 +302,9 @@ impl DirectionalLightUbo {
     #[inline]
     pub fn new(direction: Vec3, color: Vec3, intensity: f32) -> Self {
         Self {
-            direction: direction.normalize(),
+            // Use normalize_or_zero to handle zero-length vectors safely
+            // (avoids NaN propagation to shaders)
+            direction: direction.normalize_or_zero(),
             _padding1: 0.0,
             color,
             intensity,
@@ -496,6 +498,19 @@ mod tests {
         assert_eq!(light.direction, direction.normalize());
         assert_eq!(light.color, color);
         assert_eq!(light.intensity, intensity);
+    }
+
+    #[test]
+    fn test_directional_light_ubo_zero_direction() {
+        // Zero-length direction should not produce NaN
+        let light = DirectionalLightUbo::new(Vec3::ZERO, Vec3::ONE, 1.0);
+
+        // normalize_or_zero returns zero vector for zero-length input
+        assert_eq!(light.direction, Vec3::ZERO);
+        // Ensure no NaN values
+        assert!(!light.direction.x.is_nan());
+        assert!(!light.direction.y.is_nan());
+        assert!(!light.direction.z.is_nan());
     }
 
     #[test]
