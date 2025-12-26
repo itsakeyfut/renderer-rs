@@ -24,9 +24,11 @@
 //! assert_eq!(MAX_FRAMES_IN_FLIGHT, 2);
 //! ```
 
+pub mod depth_buffer;
 pub mod frame_manager;
 pub mod renderer;
 
+pub use depth_buffer::DepthBuffer;
 pub use frame_manager::{FrameData, FrameManager};
 pub use renderer::Renderer;
 
