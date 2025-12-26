@@ -9,7 +9,7 @@
 use glam::{Mat4, Quat, Vec3};
 
 /// Projection type for the camera.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Projection {
     /// Perspective projection
     Perspective {
@@ -158,8 +158,9 @@ impl Camera {
 
     /// Look at a target position.
     pub fn look_at(&mut self, target: Vec3) {
-        let forward = (target - self.position).normalize();
-        if forward.length_squared() > 0.0 {
+        let direction = target - self.position;
+        if direction.length_squared() > 0.0 {
+            let forward = direction.normalize();
             self.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, forward);
         }
     }
@@ -376,6 +377,8 @@ pub struct OrbitController {
     pub mouse_sensitivity: f32,
     /// Zoom sensitivity
     pub zoom_sensitivity: f32,
+    /// Pan sensitivity
+    pub pan_sensitivity: f32,
 }
 
 impl Default for OrbitController {
@@ -391,6 +394,7 @@ impl Default for OrbitController {
             max_polar: std::f32::consts::PI - 0.1,
             mouse_sensitivity: 0.005,
             zoom_sensitivity: 0.5,
+            pan_sensitivity: 0.002,
         }
     }
 }
@@ -471,7 +475,7 @@ impl OrbitController {
     /// * `delta_y` - Pan amount in Y (up/down)
     /// * `camera` - Reference camera for orientation
     pub fn pan(&mut self, delta_x: f32, delta_y: f32, camera: &Camera) {
-        let pan_speed = self.distance * 0.002;
+        let pan_speed = self.distance * self.pan_sensitivity;
         self.target += camera.right() * (-delta_x * pan_speed);
         self.target += camera.up() * (delta_y * pan_speed);
     }
@@ -512,12 +516,13 @@ impl OrbitController {
         self.distance = (camera.position - target).length();
 
         // Calculate azimuth and polar from camera position
+        // In calculate_position: x = sin(azimuth), z = cos(azimuth) (times distance * sin(polar))
+        // So azimuth = atan2(x, z)
         let offset = camera.position - target;
         if offset.length_squared() > 0.0 {
             let offset_normalized = offset.normalize();
             self.polar = offset_normalized.y.acos();
-            self.azimuth =
-                offset_normalized.z.atan2(offset_normalized.x) - std::f32::consts::FRAC_PI_2;
+            self.azimuth = offset_normalized.x.atan2(offset_normalized.z);
         }
     }
 }
@@ -750,5 +755,53 @@ mod tests {
         // Should be roughly pointing at target
         let dot = forward.dot(to_target);
         assert!(dot > 0.9, "Camera should be looking at target, dot={}", dot);
+    }
+
+    #[test]
+    fn test_orbit_controller_sync_roundtrip() {
+        // Test that sync_with_camera correctly recovers azimuth and polar angles
+        let target = Vec3::ZERO;
+        let mut controller = OrbitController::new(target, 5.0);
+
+        // Set specific azimuth and polar values
+        controller.set_azimuth(std::f32::consts::FRAC_PI_4); // 45 degrees
+        controller.set_polar(std::f32::consts::FRAC_PI_3); // 60 degrees
+
+        let original_azimuth = controller.azimuth();
+        let original_polar = controller.polar();
+
+        // Update a camera with this controller
+        let mut camera = Camera::new();
+        controller.update_camera(&mut camera);
+
+        // Create a new controller and sync it with the camera
+        let mut synced_controller = OrbitController::default();
+        synced_controller.sync_with_camera(&camera, target);
+
+        // The synced controller should have the same azimuth and polar (approximately)
+        assert!(
+            approx_eq(synced_controller.azimuth(), original_azimuth),
+            "Azimuth mismatch: {} vs {}",
+            synced_controller.azimuth(),
+            original_azimuth
+        );
+        assert!(
+            approx_eq(synced_controller.polar(), original_polar),
+            "Polar mismatch: {} vs {}",
+            synced_controller.polar(),
+            original_polar
+        );
+    }
+
+    #[test]
+    fn test_projection_copy_and_partialeq() {
+        let proj1 = Projection::Perspective {
+            fov_y: 45.0_f32.to_radians(),
+            aspect: 16.0 / 9.0,
+            near: 0.1,
+            far: 1000.0,
+        };
+        let proj2 = proj1; // Copy
+        assert_eq!(proj1, proj2); // PartialEq
     }
 }
