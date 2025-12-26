@@ -35,6 +35,7 @@ use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::{Allocation, AllocationCreateDesc, AllocationScheme};
 use tracing::debug;
 
+use crate::command::{CommandBuffer, CommandPool};
 use crate::device::Device;
 use crate::error::{RhiError, RhiResult};
 
@@ -54,6 +55,8 @@ pub enum BufferUsage {
     Storage,
     /// Staging buffer - CPU-writable for data upload
     Staging,
+    /// Indirect buffer - stores indirect draw/dispatch parameters
+    Indirect,
 }
 
 impl BufferUsage {
@@ -73,6 +76,9 @@ impl BufferUsage {
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST
             }
             BufferUsage::Staging => vk::BufferUsageFlags::TRANSFER_SRC,
+            BufferUsage::Indirect => {
+                vk::BufferUsageFlags::INDIRECT_BUFFER | vk::BufferUsageFlags::TRANSFER_DST
+            }
         }
     }
 
@@ -87,6 +93,8 @@ impl BufferUsage {
             BufferUsage::Storage => MemoryLocation::GpuOnly,
             // Staging buffers are CPU-writable
             BufferUsage::Staging => MemoryLocation::CpuToGpu,
+            // Indirect buffers typically GPU-only (filled by compute shaders)
+            BufferUsage::Indirect => MemoryLocation::GpuOnly,
         }
     }
 
@@ -98,6 +106,7 @@ impl BufferUsage {
             BufferUsage::Uniform => "uniform",
             BufferUsage::Storage => "storage",
             BufferUsage::Staging => "staging",
+            BufferUsage::Indirect => "indirect",
         }
     }
 }
@@ -266,6 +275,129 @@ impl Buffer {
         Ok(())
     }
 
+    /// Uploads data to the buffer (alias for `write_data` at offset 0).
+    ///
+    /// This is a convenience method for the common case of uploading
+    /// data to the beginning of the buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Data to upload
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the buffer memory is not mapped or data exceeds buffer size.
+    #[inline]
+    pub fn upload(&self, data: &[u8]) -> RhiResult<()> {
+        self.write_data(0, data)
+    }
+
+    /// Uploads data to a GPU-only buffer via a staging buffer.
+    ///
+    /// This method is used for transferring data to GPU-only memory regions.
+    /// It creates a temporary staging buffer, copies the data to it, then
+    /// executes a GPU copy command to transfer the data to the destination buffer.
+    ///
+    /// The operation is synchronous - it waits for the GPU transfer to complete
+    /// before returning.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The logical device
+    /// * `dst_buffer` - The destination buffer (typically GPU-only memory)
+    /// * `data` - Data to upload
+    /// * `command_pool` - Command pool for allocating the transfer command buffer
+    /// * `queue` - The queue to submit the transfer command to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if staging buffer creation, command recording, or
+    /// queue submission fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use renderer_rhi::device::Device;
+    /// use renderer_rhi::buffer::{Buffer, BufferUsage};
+    /// use renderer_rhi::command::CommandPool;
+    ///
+    /// # fn example(device: Arc<Device>) -> Result<(), renderer_rhi::RhiError> {
+    /// // Create GPU-only storage buffer
+    /// let storage_buffer = Buffer::new(device.clone(), BufferUsage::Storage, 1024)?;
+    ///
+    /// // Create command pool for transfer operations
+    /// let queue_family = device.queue_families().graphics_family.unwrap();
+    /// let command_pool = CommandPool::new(device.clone(), queue_family)?;
+    ///
+    /// // Upload data via staging buffer
+    /// let data: [u8; 64] = [0; 64];
+    /// Buffer::upload_via_staging(
+    ///     &device,
+    ///     &storage_buffer,
+    ///     &data,
+    ///     &command_pool,
+    ///     device.graphics_queue(),
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn upload_via_staging(
+        device: &Arc<Device>,
+        dst_buffer: &Buffer,
+        data: &[u8],
+        command_pool: &CommandPool,
+        queue: vk::Queue,
+    ) -> RhiResult<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        if data.len() as u64 > dst_buffer.size() {
+            return Err(RhiError::InvalidHandle(format!(
+                "Data size {} exceeds destination buffer size {}",
+                data.len(),
+                dst_buffer.size()
+            )));
+        }
+
+        // Create staging buffer with CPU-visible memory
+        let staging = Buffer::new(device.clone(), BufferUsage::Staging, data.len() as u64)?;
+        staging.upload(data)?;
+
+        // Record copy command
+        let cmd = CommandBuffer::new(device.clone(), command_pool)?;
+        cmd.begin()?;
+
+        let copy_region = vk::BufferCopy::default()
+            .src_offset(0)
+            .dst_offset(0)
+            .size(data.len() as u64);
+
+        cmd.copy_buffer(staging.handle(), dst_buffer.handle(), &[copy_region]);
+
+        cmd.end()?;
+
+        // Submit and wait for completion
+        let command_buffers = [cmd.handle()];
+        let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers);
+
+        unsafe {
+            device
+                .handle()
+                .queue_submit(queue, &[submit_info], vk::Fence::null())?;
+            device.handle().queue_wait_idle(queue)?;
+        }
+
+        debug!(
+            "Uploaded {} bytes to {} buffer via staging",
+            data.len(),
+            dst_buffer.usage().name()
+        );
+
+        Ok(())
+    }
+
     /// Returns the Vulkan buffer handle.
     #[inline]
     pub fn handle(&self) -> vk::Buffer {
@@ -334,6 +466,11 @@ mod tests {
                 .to_vk_usage()
                 .contains(vk::BufferUsageFlags::TRANSFER_SRC)
         );
+        assert!(
+            BufferUsage::Indirect
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::INDIRECT_BUFFER)
+        );
     }
 
     #[test]
@@ -358,6 +495,10 @@ mod tests {
             BufferUsage::Staging.memory_location(),
             MemoryLocation::CpuToGpu
         );
+        assert_eq!(
+            BufferUsage::Indirect.memory_location(),
+            MemoryLocation::GpuOnly
+        );
     }
 
     #[test]
@@ -367,5 +508,47 @@ mod tests {
         assert_eq!(BufferUsage::Uniform.name(), "uniform");
         assert_eq!(BufferUsage::Storage.name(), "storage");
         assert_eq!(BufferUsage::Staging.name(), "staging");
+        assert_eq!(BufferUsage::Indirect.name(), "indirect");
+    }
+
+    #[test]
+    fn test_buffer_usage_transfer_dst_flags() {
+        // Verify that non-staging buffers have TRANSFER_DST flag for staging uploads
+        assert!(
+            BufferUsage::Vertex
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::TRANSFER_DST)
+        );
+        assert!(
+            BufferUsage::Index
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::TRANSFER_DST)
+        );
+        assert!(
+            BufferUsage::Uniform
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::TRANSFER_DST)
+        );
+        assert!(
+            BufferUsage::Storage
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::TRANSFER_DST)
+        );
+        assert!(
+            BufferUsage::Indirect
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::TRANSFER_DST)
+        );
+        // Staging buffer should have TRANSFER_SRC instead
+        assert!(
+            !BufferUsage::Staging
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::TRANSFER_DST)
+        );
+        assert!(
+            BufferUsage::Staging
+                .to_vk_usage()
+                .contains(vk::BufferUsageFlags::TRANSFER_SRC)
+        );
     }
 }
