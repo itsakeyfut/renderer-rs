@@ -27,6 +27,7 @@ pub mod texture;
 pub mod vertex;
 
 pub use error::{RhiError, RhiResult};
+pub use vertex::{TriangleVertex, Vertex};
 
 // Re-export ash types that users might need
 pub use ash::vk;
