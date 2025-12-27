@@ -11,7 +11,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
 use renderer_core::Timer;
-use renderer_platform::{InputState, Window};
+use renderer_platform::{InputState, MouseButton, Window};
 use renderer_renderer::Renderer;
 
 struct App {
@@ -74,13 +74,20 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                let _delta = self.timer.delta_secs();
+                let delta = self.timer.delta_secs();
 
-                if let Some(ref mut renderer) = self.renderer
-                    && let Err(e) = renderer.render_frame()
-                {
-                    error!("Render error: {:?}", e);
+                if let Some(ref mut renderer) = self.renderer {
+                    // Update camera based on input
+                    renderer.update(&self.input, delta);
+
+                    // Render frame
+                    if let Err(e) = renderer.render_frame() {
+                        error!("Render error: {:?}", e);
+                    }
                 }
+
+                // Clear per-frame input state AFTER it has been used
+                self.input.begin_frame();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 use winit::keyboard::PhysicalKey;
@@ -92,12 +99,31 @@ impl ApplicationHandler for App {
                     }
                 }
             }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let btn = MouseButton::from(button);
+                if state.is_pressed() {
+                    self.input.on_mouse_pressed(btn);
+                } else {
+                    self.input.on_mouse_released(btn);
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input
+                    .on_mouse_moved(position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                use winit::event::MouseScrollDelta;
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    MouseScrollDelta::PixelDelta(pos) => (pos.x as f32, pos.y as f32),
+                };
+                self.input.on_scroll(dx, dy);
+            }
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        self.input.begin_frame();
         if let Some(ref window) = self.window {
             window.request_redraw();
         }

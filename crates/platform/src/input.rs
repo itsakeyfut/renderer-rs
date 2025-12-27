@@ -24,7 +24,7 @@ impl From<winit::event::MouseButton> for MouseButton {
 }
 
 /// Tracks the current state of keyboard and mouse input.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InputState {
     /// Currently pressed keys
     pressed_keys: HashSet<KeyCode>,
@@ -46,6 +46,25 @@ pub struct InputState {
     mouse_delta: (f32, f32),
     /// Mouse scroll delta since last frame
     scroll_delta: (f32, f32),
+    /// Whether mouse position has been initialized
+    mouse_initialized: bool,
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            pressed_keys: HashSet::new(),
+            just_pressed_keys: HashSet::new(),
+            just_released_keys: HashSet::new(),
+            pressed_buttons: HashSet::new(),
+            just_pressed_buttons: HashSet::new(),
+            just_released_buttons: HashSet::new(),
+            mouse_position: (0.0, 0.0),
+            mouse_delta: (0.0, 0.0),
+            scroll_delta: (0.0, 0.0),
+            mouse_initialized: false,
+        }
+    }
 }
 
 impl InputState {
@@ -93,10 +112,20 @@ impl InputState {
     }
 
     /// Handle mouse movement.
+    /// Delta is accumulated to handle multiple mouse events per frame.
     pub fn on_mouse_moved(&mut self, x: f32, y: f32) {
+        if !self.mouse_initialized {
+            // First mouse event - just set position, don't calculate delta
+            self.mouse_position = (x, y);
+            self.mouse_initialized = true;
+            return;
+        }
+
         let old = self.mouse_position;
         self.mouse_position = (x, y);
-        self.mouse_delta = (x - old.0, y - old.1);
+        // Accumulate delta instead of replacing to handle multiple events per frame
+        self.mouse_delta.0 += x - old.0;
+        self.mouse_delta.1 += y - old.1;
     }
 
     /// Handle mouse scroll.
